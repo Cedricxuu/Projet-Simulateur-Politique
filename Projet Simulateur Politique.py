@@ -58,8 +58,8 @@ En 2 phrases max, donne la suite de l'histoire suivant les décisions du joueur,
 Termine toujours par : "Que faites-vous ensuite ?"
 """
     reaction = appel_ollama(prompt_reaction)
-    print(f"\n🤖 IA : {reaction}")
-    log.append(f"Réaction IA : {reaction}")
+    print(f"\n🤖 Narrateur : {reaction}")
+    log.append(f"Réaction Narrateur : {reaction}")
 
     # Modification des jauges (chaque tour est imprévisible)
     for jauge in etat:
