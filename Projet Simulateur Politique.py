@@ -3,7 +3,7 @@ import random
 import time
 from datetime import datetime
 
-modele = "llama2:chat"  # Change selon ce que tu as
+modele = "mistral"  # Change selon ce que tu as
 nb_tours = 10
 log = []
 
