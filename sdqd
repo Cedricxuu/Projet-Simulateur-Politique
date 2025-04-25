@@ -1,0 +1,173 @@
+import ollama
+from ollama import Client
+import time
+import re  # pour l'extraction robuste
+
+client = Client(host='http://localhost:11434')
+mort = False
+tour = 1  # Variable pour suivre le numéro du tour
+
+# Jauges
+etat = {
+    "Bonheur": 50,
+    "Environnement": 50,
+    "Économie": 50,
+}
+variation = {
+    "Bonheur": 0,
+    "Environnement": 0,
+    "Économie": 0,
+}
+
+def generer_probleme():
+    """Demande à l'IA de générer un problème politique avec des impacts cachés pour chaque solution."""
+    response = client.chat(
+        model="mistral",
+        messages=[
+            {
+                "role": "system",
+                "content": 
+                """Règles à respecter obligatoirement :    
+                Pas d'intro/transition.
+                Toute les situations se place uniquement en France.
+                Tu dois générer un problème politique ou économique avec 3 solutions distinctes.
+                
+                TRÈS IMPORTANT : Pour chaque solution, tu dois générer des impacts différents sur les jauges:
+                - "Bonheur" (valeur entre -10 et +10)
+                - "Économie" (valeur entre -10 et +10)
+                - "Environnement" (valeur entre -10 et +10)
+                
+                Ces impacts doivent être logiquement liés aux solutions proposées.
+                
+                OBLIGATOIRE : Inclure ces impacts dans une section cachée après les solutions, format:
+                
+                ### Impacts ###
+                [1]: Bonheur:{}, Économie:{}, Environnement:{}
+                [2]: Bonheur:{}, Économie:{}, Environnement:{}
+                [3]: Bonheur:{}, Économie:{}, Environnement:{}
+                
+                Les valeurs DOIVENT être différentes pour chaque option.
+                
+                Écrire en français exclusivement.
+              
+                Format strict de la réponse visible pour l'utilisateur : 
+                Une première ligne décrivant le problème courtement
+            
+                [1] : [description de la première solution en une phrase ]
+                [2] : [description de la seconde solution en une phrase ]
+                [3] : [description de la troisième solution en une phrase]
+                """
+            },
+            {
+                "role": "user",
+                "content": "Présente un problème politique/économique qui pourrait survenir et ses solutions."
+            }
+        ],
+        options={
+            'temperature': 0.8
+        }
+    )
+    return response['message']['content']
+
+
+def extraire_impact(texte_complet, choix):
+    """Extrait les impacts même si l'IA ne suit pas parfaitement le format."""
+    try:
+        pattern = r"\[{}\]:.*?Bonheur\s*:\s*(-?\d+).*?Économie\s*:\s*(-?\d+).*?Environnement\s*:\s*(-?\d+)".format(choix)
+        match = re.search(pattern, texte_complet, re.DOTALL)
+        if match:
+            bonheur = int(match.group(1))
+            economie = int(match.group(2))
+            environnement = int(match.group(3))
+            return {
+                "Bonheur": bonheur,
+                "Économie": economie,
+                "Environnement": environnement
+            }
+        else:
+            print("[⚠️] Impacts non trouvés pour le choix", choix, "- valeurs par défaut utilisées.")
+            return {"Bonheur": 0, "Économie": 0, "Environnement": 0}
+    except Exception as e:
+        print(f"[Erreur] Problème d'extraction des impacts : {e}")
+        return {"Bonheur": 0, "Économie": 0, "Environnement": 0}
+
+
+def ajuster_jauges(impacts):
+    """Ajuste les jauges en fonction des impacts extraits."""
+    for jauge, valeur in impacts.items():
+        if jauge in etat:
+            variation[jauge] = valeur
+            etat[jauge] += valeur
+            etat[jauge] = max(0, min(100, etat[jauge]))
+
+
+def afficher_probleme(texte_complet):
+    """Affiche uniquement la partie visible du problème (sans les impacts)."""
+    if "### Impacts ###" in texte_complet:
+        partie_visible = texte_complet.split("### Impacts ###")[0].strip()
+        print(partie_visible)
+    else:
+        print(texte_complet)
+
+
+def afficher_situation():
+    """Affiche la situation actuelle avec les variations depuis le dernier tour."""
+    print("\n📊 ÉTAT DU PAYS :")
+    for nom, valeur in etat.items():
+        barres = int(valeur / 10)
+        var = variation[nom]
+        var_text = ""
+        if var > 0:
+            var_text = f" (↑ +{var})"
+        elif var < 0:
+            var_text = f" (↓ {var})"
+        print(f"{nom:12} : [{'#' * barres}{'-' * (10 - barres)}] {valeur}/100{var_text}")
+    
+    for key in variation:
+        variation[key] = 0
+        
+    if any(valeur <= 0 for valeur in etat.values()):
+        print("\n💥 Une des structures du pays s'effondre. GAME OVER.")
+        return True
+    return False
+
+
+def intro_jeu():
+    print("\n" + "="*60)
+    print("🏛️  SIMULATEUR DE GOUVERNANCE POLITIQUE  🏛️")
+    print("="*60)
+    print("\nVous êtes à la tête d'un pays et devez prendre des décisions difficiles.")
+    print("Chaque choix aura des conséquences sur le bonheur de la population,")
+    print("l'économie et l'environnement. Maintenez l'équilibre pour survivre!")
+    print("\nObjectif: Empêcher qu'une jauge tombe à zéro.")
+    print("="*60)
+
+
+# Programme principal
+intro_jeu()
+print(f"\n🔄 Tour n°{tour}")
+
+while not mort:
+    texte_complet = generer_probleme()
+    afficher_probleme(texte_complet)
+    
+    try:
+        choix = int(input("\nRéagissez en choisissant une solution (1, 2 ou 3) : "))
+        if choix not in [1, 2, 3]:
+            print("Choix invalide. Veuillez entrer 1, 2 ou 3.")
+            continue
+        
+        impacts = extraire_impact(texte_complet, choix)
+        ajuster_jauges(impacts)
+        
+        print(f"\nVous avez choisi la solution {choix}. Les conséquences se manifestent au prochain tour.")
+        time.sleep(1.5)
+        
+        tour += 1
+        print(f"\n🔄 Tour n°{tour}")
+        mort = afficher_situation()
+        
+    except ValueError:
+        print("Entrée invalide. Veuillez entrer un nombre entre 1 et 3.")
+
+print("\nMerci d'avoir joué!")
