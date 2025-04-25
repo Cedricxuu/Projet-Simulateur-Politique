@@ -1,0 +1,103 @@
+import ollama
+from ollama import *
+import random
+import time
+from datetime import datetime
+
+client = Client(host='http://localhost:11434')
+log = []
+mort = False
+
+# Jauges
+etat = {
+    "Bonheur": 50,
+    "Environnement": 50,
+    "Économie": 50,
+}
+
+
+def questions():
+    response = client.chat(
+        model="mistral",
+        messages=[
+            {
+                "role": "system",
+                "content": 
+                """Regle a respecter obligatoirement :    
+                Pas d'intro/transition. 
+                Tu dois inclure 3 types de solutions : 1 solution favorable à l'économie et défavorable au bonheur de la population, 1 solution favorable au bonheur de la population et défavorable à l'économie, 1 solution pouvant être positif ou négatif pour l'environnement et aléatoirement bon pour l'économie ou le bonheur de la population.
+                TRES IMPORTANT ET OBLIGATOIRE POUR CHAQUE REPONSE : inclure les impacts dans une section cachée après les solutions, sous la forme suivante :
+               
+                Français exclusif.
+              
+                Format strict : 
+                
+                Rédiger une première ligne illustrant le problème et la situation (200 caractères maximum) 
+                
+                les Solutions en ordre aléatoire au nombre de 3 obligatoirement :
+                    [1] :  
+                    [2] : 
+                    [3] :  
+                    
+                
+                """
+            },
+            {
+                "role": "user",
+                "content": "Présente un problème politique/économique qui pourrait arriver EN FRANCAIS"
+            }
+        ],
+        options={
+            'temperature': 0.8
+        }
+    )
+    print("\n".join(line for line in response['message']['content'].split("\n") if not line.startswith("### Impacts ###")))
+    return response['message']['content']
+
+
+def extraire_impact(texte, choix):
+    """Extrait les impacts des jauges à partir de la section cachée."""
+    if "### Impacts ###" in texte:
+        impacts_section = texte.split("### Impacts ###")[1]
+        lignes = impacts_section.split("\n")
+        for ligne in lignes:
+            if ligne.startswith(f"[{choix}]"):
+                impact_str = ligne.split(":")[1].strip()
+                impacts = {}
+                for impact in impact_str.split(","):
+                    jauge, valeur = impact.split(":")
+                    impacts[jauge.strip()] = int(valeur.strip())
+                return impacts
+    return {}
+
+
+def ajuster_jauges(impacts):
+    """Ajuste les jauges en fonction des impacts extraits."""
+    for jauge, valeur in impacts.items():
+        if jauge in etat:
+            etat[jauge] += valeur
+            etat[jauge] = max(0, min(100, etat[jauge]))  # Limite entre 0 et 100
+
+
+def afficher_jauges():
+    print("\n📊 ÉTAT DU PAYS :")
+    for nom, valeur in etat.items():
+        barres = int(valeur / 10)
+        print(f"{nom:10} : [{'#' * barres}{'-' * (10 - barres)}] {valeur}/100")
+    if any(valeur <= 0 for valeur in etat.values()):
+        print("\n💥 Une des structures du pays s’effondre. GAME OVER.")
+        return True
+    return False
+
+
+while not mort:
+    texte = questions()
+    try:
+        choix = int(input("\nRéagissez en choisissant une solution (1, 2 ou 3) : "))
+        impacts = extraire_impact(texte, choix)
+        ajuster_jauges(impacts)
+    except ValueError:
+        print("Entrée invalide. Veuillez entrer un nombre entre 1 et 3.")
+    mort = afficher_jauges()
+
+print("Merci d'avoir joué !")
