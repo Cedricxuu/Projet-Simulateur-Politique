@@ -1,0 +1,293 @@
+import ollama
+from ollama import Client
+import time
+import random
+
+client = Client(host='http://localhost:11434')
+mort = False
+tour = 1  # Variable pour suivre le numéro du tour
+
+# Jauges
+etat = {
+    "Bonheur": 50,
+    "Environnement": 50,
+    "Économie": 50,
+}
+variation = {
+    "Bonheur": 0,
+    "Environnement": 0,
+    "Économie": 0,
+}
+
+def generer_probleme():
+    """Demande à l'IA de générer un problème politique avec des impacts obligatoires pour chaque solution."""
+    response = client.chat(
+        model="mistral",
+        messages=[
+            {
+                "role": "system",
+                "content": 
+                """Règles à respecter obligatoirement :    
+                Pas d'intro/transition. 
+                Tu dois générer un problème politique ou économique avec EXACTEMENT 3 solutions distinctes.
+                Tu es en FRANCE obligatoirement et tu dois obligatoirement répondre en français.
+                
+                TRÈS IMPORTANT : Pour chaque solution, tu dois générer des impacts SIGNIFICATIFS différents sur les jauges qui ne doivent pas être visibles par l'utilisateur:
+                - "Bonheur" (valeur entre -20 et +20, JAMAIS 0)
+                - "Économie" (valeur entre -20 et +20, JAMAIS 0)
+                - "Environnement" (valeur entre -20 et +20, JAMAIS 0)
+                
+                Ces impacts doivent être logiquement liés aux solutions proposées. CHAQUE JAUGE DOIT ÊTRE MODIFIÉE, PAS DE VALEUR 0.
+                
+                OBLIGATOIRE ET CRUCIAL : Inclure ces impacts dans une section cachée après les solutions, format:
+                
+                ### Impacts ###
+                [1]: Bonheur:{valeur1}, Économie:{valeur2}, Environnement:{valeur3}
+                [2]: Bonheur:{valeur4}, Économie:{valeur5}, Environnement:{valeur6}
+                [3]: Bonheur:{valeur7}, Économie:{valeur8}, Environnement:{valeur9}
+                
+                Les valeurs DOIVENT être différentes pour chaque option.
+                JAMAIS DE VALEUR 0 POUR LES IMPACTS - toujours des valeurs entre -20 et -1 ou entre +1 et +20.
+                Écrire en français exclusivement.
+              
+                Format strict de la réponse visible pour l'utilisateur : 
+                Une première ligne décrivant le problème (200 caractères maximum)
+                
+                [1] : [description de la première solution en une phrase] 
+                [2] : [description de la seconde solution en une phrase] 
+                [3] : [description de la troisième solution en une phrase] 
+                """
+            },
+            {
+                "role": "user",
+                "content": "Présente un problème politique/économique qui pourrait survenir."
+            }
+        ],
+        options={
+            'temperature': 0.8  # Équilibre entre créativité et respect des consignes
+        }
+    )
+    return response['message']['content']
+
+def generer_impacts_via_ia(choix):
+    """Génère des impacts via l'IA quand la section impacts est mal formée."""
+    print("[Système] Consultation de l'IA pour obtenir des impacts valides...")
+    
+    response = client.chat(
+        model="mistral", 
+        messages=[
+            {
+                "role": "system",
+                "content": 
+                """Génère UNIQUEMENT des impacts pour une décision politique.
+                Format strict à respecter :
+                Bonheur:{valeur1}, Économie:{valeur2}, Environnement:{valeur3}
+                
+                Chaque valeur doit être entre -20 et +20, JAMAIS 0.
+                Pas d'explication, uniquement les valeurs.
+                """
+            },
+            {
+                "role": "user", 
+                "content": f"Génère des impacts pour la solution {choix} (valeurs entre -20 et +20, jamais 0)"
+            }
+        ],
+        options={'temperature': 0.7}
+    )
+    
+    impacts_text = response['message']['content']
+    # Extraction des impacts
+    impacts = {}
+    parties = impacts_text.split(",")
+    
+    for partie in parties:
+        if ":" in partie:
+            jauge_valeur = partie.strip().split(":")
+            if len(jauge_valeur) == 2:
+                jauge = jauge_valeur[0].strip()
+                try:
+                    valeur = int(jauge_valeur[1].strip().replace("+", ""))
+                    if valeur == 0:  # On s'assure qu'il n'y a pas de 0
+                        valeur = random.choice([-2, -1, 1, 2])
+                    impacts[jauge] = valeur
+                except ValueError:
+                    impacts[jauge] = random.choice([-3, -2, 2, 3])
+    
+    # Vérifier que toutes les jauges sont présentes
+    for jauge in etat.keys():
+        if jauge not in impacts:
+            # Dernière tentative pour avoir une valeur valide
+            impacts[jauge] = random.choice([-5, -4, -3, 3, 4, 5])
+    
+    return impacts
+
+def extraire_impact(texte_complet, choix):
+    """Extrait les impacts des jauges à partir de la section cachée et garantit des impacts via l'IA."""
+    try:
+        if "### Impacts ###" not in texte_complet:
+            print("[Système] Section d'impacts manquante, consultation de l'IA...")
+            return generer_impacts_via_ia(choix)
+        
+        impacts_section = texte_complet.split("### Impacts ###")[1]
+        lignes = impacts_section.strip().split("\n")
+        
+        for ligne in lignes:
+            if ligne.startswith(f"[{choix}]"):
+                impacts = {}
+                valeurs_texte = ligne.split(":", 1)[1].strip()
+                parties = valeurs_texte.split(",")
+                
+                for partie in parties:
+                    jauge_valeur = partie.strip().split(":")
+                    if len(jauge_valeur) == 2:
+                        jauge = jauge_valeur[0].strip()
+                        valeur_str = jauge_valeur[1].strip()
+                        try:
+                            valeur = int(valeur_str.replace("+", ""))
+                            # Garantir un impact non-nul
+                            if valeur == 0:
+                                print(f"[Système] Impact nul détecté pour {jauge}, consultation de l'IA...")
+                                # On ne génère pas aléatoirement mais demande à l'IA
+                                temp_impacts = generer_impacts_via_ia(choix)
+                                valeur = temp_impacts.get(jauge, random.choice([-3, -2, 2, 3]))
+                            impacts[jauge] = valeur
+                        except ValueError:
+                            print(f"[Système] Impossible de parser la valeur pour {jauge}, consultation de l'IA...")
+                            # Demande à l'IA plutôt que génération aléatoire
+                            temp_impacts = generer_impacts_via_ia(choix)
+                            impacts[jauge] = temp_impacts.get(jauge, random.choice([-3, -2, 2, 3]))
+                
+                # Vérifier que toutes les jauges sont impactées
+                for jauge in etat.keys():
+                    if jauge not in impacts:
+                        print(f"[Système] Jauge {jauge} manquante, consultation de l'IA...")
+                        temp_impacts = generer_impacts_via_ia(choix)
+                        impacts[jauge] = temp_impacts.get(jauge, random.choice([-3, -2, 2, 3]))
+                
+                return impacts
+        
+        # Si on arrive ici, l'impact n'a pas été trouvé pour le choix spécifié
+        print(f"[Système] Impact pour le choix {choix} non trouvé, consultation de l'IA...")
+        return generer_impacts_via_ia(choix)
+        
+    except Exception as e:
+        print(f"[Système] Erreur lors de l'extraction des impacts: {e}")
+        print("[Système] Consultation de l'IA pour obtenir des impacts valides...")
+        return generer_impacts_via_ia(choix)
+
+def ajuster_jauges(impacts):
+    """Ajuste les jauges en fonction des impacts extraits."""
+    for jauge, valeur in impacts.items():
+        if jauge in etat:
+            # Enregistre la variation pour l'affichage au tour suivant
+            variation[jauge] = valeur
+            
+            # Applique le changement
+            etat[jauge] += valeur
+            etat[jauge] = max(0, min(100, etat[jauge]))  # Limite entre 0 et 100
+
+def afficher_probleme(texte_complet):
+    """Affiche uniquement la partie visible du problème (sans les impacts)."""
+    if "### Impacts ###" in texte_complet:
+        partie_visible = texte_complet.split("### Impacts ###")[0].strip()
+        print(partie_visible)
+    else:
+        print(texte_complet)
+
+def afficher_situation():
+    """Affiche la situation actuelle avec des tendances mais sans valeurs précises."""
+    print("\n📊 ÉTAT DU PAYS :")
+    for nom, valeur in etat.items():
+        barres = int(valeur / 10)
+        var = variation[nom]
+        
+        # Affichage des tendances sans valeurs précises
+        var_text = ""
+        if var > 10:
+            var_text = " (↑↑ Forte hausse)"
+        elif var > 0:
+            var_text = " (↑ Hausse)"
+        elif var < -10:
+            var_text = " (↓↓ Forte baisse)"
+        elif var < 0:
+            var_text = " (↓ Baisse)"
+            
+        print(f"{nom:12} : [{'#' * barres}{'-' * (10 - barres)}] {valeur}/100{var_text}")
+    
+    # Réinitialise les variations pour le prochain tour
+    for key in variation:
+        variation[key] = 0
+        
+    if any(valeur <= 0 for valeur in etat.values()):
+        print("\n💥 Une des structures du pays s'effondre. GAME OVER.")
+        return True
+    return False
+
+def verifier_format_reponse(texte):
+    """Vérifie que la réponse de l'IA contient bien 3 options et les impacts."""
+    lignes = texte.split("\n")
+    options_count = sum(1 for ligne in lignes if ligne.strip().startswith("[") and "]" in ligne)
+    
+    # Vérifie si la section d'impacts est présente
+    impacts_present = "### Impacts ###" in texte
+    
+    if options_count < 3 or not impacts_present:
+        return False
+    return True
+
+def intro_jeu():
+    print("\n" + "="*60)
+    print("🏛️  SIMULATEUR DE GOUVERNANCE POLITIQUE  🏛️")
+    print("="*60)
+    print("\nVous êtes à la tête de la France et devez prendre des décisions difficiles.")
+    print("Chaque choix aura des conséquences sur le bonheur de la population,")
+    print("l'économie et l'environnement. Maintenez l'équilibre pour survivre!")
+    print("\nObjectif: Empêcher qu'une jauge tombe à zéro.")
+    print("="*60)
+
+# Programme principal
+intro_jeu()
+print(f"\n🔄 Tour n°{tour}")
+
+while not mort:
+    # Génère un nouveau problème avec l'IA et vérifie le format
+    texte_complet = generer_probleme()
+    
+    # Vérifie le format et regénère si nécessaire
+    tentatives = 1
+    while not verifier_format_reponse(texte_complet) and tentatives < 3:
+        print("[Système] Reformulation du problème...")
+        texte_complet = generer_probleme()
+        tentatives += 1
+    
+    # Affiche uniquement la partie visible (sans les impacts)
+    afficher_probleme(texte_complet)
+    
+    try:
+        choix = int(input("\nRéagissez en choisissant une solution (1, 2 ou 3) : "))
+        if choix not in [1, 2, 3]:
+            print("Choix invalide. Veuillez entrer 1, 2 ou 3.")
+            continue
+            
+        # Extrait les impacts cachés, maintenant exclusivement fournis par l'IA
+        impacts = extraire_impact(texte_complet, choix)
+        
+        # Affiche les impacts pour debug (à retirer en production)
+        # print(f"DEBUG - Impacts: {impacts}")
+        
+        # Applique les impacts aux jauges
+        ajuster_jauges(impacts)
+        
+        print(f"\nVous avez choisi la solution {choix}. Les conséquences se manifesteront au prochain tour.")
+        time.sleep(1.5)
+        
+        tour += 1  # Incrémente le numéro du tour
+        print(f"\n🔄 Tour n°{tour}")
+        
+        # Affiche la situation avec les tendances
+        mort = afficher_situation()
+        
+    except ValueError:
+        print("Entrée invalide. Veuillez entrer un nombre entre 1 et 3.")
+
+print("\nMerci d'avoir joué!")
